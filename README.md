@@ -21,6 +21,8 @@ I wanted to:
   - Syntax parsing
   - Better architecture
   - Error handling and edge cases
+  - ✅ Expression evaluation with `+` now works:
+  - Numbers: `{{ x + y }} → 30`
 
 ## 📌 Notes
 
