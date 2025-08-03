@@ -5,6 +5,8 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use std::io::Write;
 
+
+
 macro_rules! var_map {
     ($($var:ident),*) => {
         {
@@ -38,6 +40,37 @@ fn get_var(key: &str) -> Option<Value> {
     let vars = GLOBAL_VARS.lock().unwrap();
     vars.vars.get(key).cloned()
 }
+fn contanis_math_op(vec:Vec<String>)->bool{
+    let ops=["+","-","*","/"];
+    vec.iter().any(|item| ops.contains(&item.as_str()))
+}
+fn is_math_op(s: &str) -> bool {
+    matches!(s, "+" | "-" | "*" | "/")
+}
+
+fn tokenize_expression(input: &str) -> Vec<String> {
+    let spaced = input
+        .replace('\n', " __NEWLINE__ ")
+        .replace('+', " + ")
+        .replace('-', " - ")
+        .replace('*', " * ")
+        .replace('/', " / ");
+
+    spaced
+        .split_whitespace()
+        .map(|s| {
+            if s == "__NEWLINE__" {
+                "\n".to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .collect()
+}
+
+
+
+
 
 fn main() {
     let tw = "Idont know ";
@@ -55,6 +88,16 @@ fn main() {
     
     let vars = GLOBAL_VARS.lock().unwrap();
     println!("the map is {:#?}", vars);
+
+     let randx: Vec<&str> = vec!["20", "+", "30"];
+    let testx_string = randx.join(""); // "20+30"
+
+    println!("The string form of that array is: {}", testx_string);
+
+    let res=meval::eval_str(testx_string).unwrap();
+    println!("meavl res is {}",res)
+  
+
 }
 
 fn get_tokens(mut text: String) -> String {
@@ -73,42 +116,20 @@ fn get_tokens(mut text: String) -> String {
 
             // Extract inner expression
             let inner = &text[start + 2..end];
-            let words: Vec<&str> = inner.split_whitespace().collect();
+            let words = tokenize_expression(inner);
+
             println!("Extracted inner expression: {:?}", words);
 
-            // Handle expressions with operators
-            if words.len() == 3 && words[1] == "+" {
-                let left = resolve_operand(words[0]);
-                let right = resolve_operand(words[2]);
-                
-                match (left, right) {
-                    (OperandResolution::Number(a), OperandResolution::Number(b)) => {
-                        parts.push((a + b).to_string());
-                    }
-                    (OperandResolution::StringVar(a), OperandResolution::StringVar(b)) => {
-                        parts.push(a + &b);
-                    }
-                    (OperandResolution::StringVar(a), OperandResolution::Number(b)) => {
-                        parts.push(a + &b.to_string());
-                    }
-                    (OperandResolution::Number(a), OperandResolution::StringVar(b)) => {
-                        parts.push(a.to_string() + &b);
-                    }
-                    (OperandResolution::NotFound, _) | (_, OperandResolution::NotFound) => {
-                        parts.push("#MISSING_VAR#".to_string());
-                    }
-                    _ => {
-                        parts.push("#INVALID_OPERANDS#".to_string());
-                    }
-                }
+            if contanis_math_op(words.clone()) {
+                process_math_expression(words, &mut parts);
             } else {
-                // Handle single variable lookups
+                // Handle single variable or text expressions
                 let mut combined = String::new();
                 for word in words {
                     if combined.is_empty() {
-                        combined = search_for_vars(word);
+                        combined = search_for_vars(&word.as_str());
                     } else {
-                        combined = combined + " " + &search_for_vars(word);
+                        combined = combined + " " + &search_for_vars(&word.as_str());
                     }
                 }
                 parts.push(combined);
@@ -121,7 +142,7 @@ fn get_tokens(mut text: String) -> String {
         }
     }
 
-    // Push leftover text
+    // If any remaining text after last }}
     if !text.is_empty() {
         parts.push(text);
     }
@@ -129,6 +150,85 @@ fn get_tokens(mut text: String) -> String {
     parts.join("")
 }
 
+fn process_math_expression(words: Vec<String>, parts: &mut Vec<String>) {
+    let mut meval_vec: Vec<String> = Vec::new();
+    let mut have_string = false;
+    let mut have_number = false;
+
+    for word in words {
+        if word == "\n" {
+            // Finalize current expression on newline
+            finalize_expression(&meval_vec, have_string, have_number, parts);
+            // Reset state for next expression
+            meval_vec.clear();
+            have_string = false;
+            have_number = false;
+            continue;
+        }
+
+        if is_math_op(&word.as_str()) {
+            meval_vec.push(word.to_string());
+            continue;
+        }
+
+        match resolve_operand(&word.as_str()) {
+            OperandResolution::Number(n) => {
+                if have_string {
+                    parts.push("we cant add string to number ".to_string());
+                    // Reset state
+                    meval_vec.clear();
+                    have_string = false;
+                    have_number = false;
+                    continue;
+                }
+                have_number = true;
+                meval_vec.push(n.to_string());
+            }
+            OperandResolution::StringVar(var_st) => {
+                have_string = true;
+                if have_number {
+                    parts.push("we cant add string to number ".to_string());
+                    // Reset state
+                    meval_vec.clear();
+                    have_string = false;
+                    have_number = false;
+                    continue;
+                }
+                meval_vec.push(var_st.to_string());
+            }
+            OperandResolution::NotFound => {
+                parts.push("VAR not found check the spling ".to_string());
+                meval_vec.clear();
+                have_string = false;
+                have_number = false;
+                continue;
+            }
+            OperandResolution::Invalid => {
+                parts.push("Invalid ".to_string());
+                meval_vec.clear();
+                have_string = false;
+                have_number = false;
+                continue;
+            }
+        }
+    }
+
+    // Finalize any remaining expression after loop
+    if !meval_vec.is_empty() {
+        finalize_expression(&meval_vec, have_string, have_number, parts);
+    }
+}
+
+fn finalize_expression(meval_vec: &[String], have_string: bool, have_number: bool, parts: &mut Vec<String>) {
+    if have_string && !have_number {
+        parts.push(meval_vec.join(""));
+    } else if !have_string && have_number {
+        match meval::eval_str(meval_vec.join("")) {
+            Ok(r) => parts.push(r.to_string()),
+            Err(_) => println!("error"),
+        }
+    }
+}
 fn search_for_vars(name: &str) -> String {
     match get_var(name) {
         Some(val) => {
